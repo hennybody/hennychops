@@ -1,2 +1,2 @@
 # hennychops
-Chop and Screw Web App
+Henny's Chop and Screw Music Web Player
