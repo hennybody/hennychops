@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chop & Screw Music App</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-size: cover;
+      color: #fff;
+      text-align: center;
+      padding: 2rem;
+      backdrop-filter: brightness(0.6) blur(2px);
+    }
+
+    h1 {
+      font-size: 3rem;
+      margin-bottom: 2rem;
+      text-shadow: 2px 2px 10px rgba(0,0,0,0.7);
+    }
+
+    label, input, button {
+      display: block;
+      margin: 1rem auto;
+      font-size: 1rem;
+      max-width: 400px;
+      width: 90%;
+    }
+
+    input[type="range"] {
+      width: 100%;
+    }
+
+    button {
+      background: #6e00ff;
+      color: white;
+      padding: 0.8rem 1.2rem;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+
+    button:hover {
+      background: #a100ff;
+    }
+
+    .control-group {
+      background: rgba(0, 0, 0, 0.5);
+      padding: 1rem;
+      border-radius: 1rem;
+      margin-bottom: 2rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Henny's 🎧 Chop & Screw Music Player</h1>
+
+  <div class="control-group">
+    <input type="file" id="fileInput" accept="audio/*" />
+    <button onclick="playAudio()">▶ Play</button>
+    <button onclick="stopAudio()">⏹ Stop</button>
+  </div>
+
+  <div class="control-group">
+    <label>SpeedTempo (Default is 80%)
+      <input type="range" id="speedSlider" min="0.5" max="1" step="0.01" value="0.8" />
+    </label>
+
+    <label>Reverb FX
+      <input type="checkbox" id="reverbToggle" />
+    </label>
+
+    <label>Chop Interval (ms)
+      <input type="number" id="chopIntervalInput" value="600" min="100" step="50">
+    </label>
+
+    <label>Chop Length (s)
+      <input type="number" id="chopLengthInput" value="0.5" min="0.1" step="0.1">
+    </label>
+
+    <label>BPM (for Beat Chop Mode)
+      <input type="number" id="bpmInput" value="80" min="40" max="200" step="1">
+    </label>
+
+    <label>Enable Auto Chop (beta)
+	<input type="checkbox" id="beatModeToggle">
+    </label>
+
+    <button onclick="startChop()">🔀 Start Chop (beta)</button>
+    <button onclick="stopChop()">🛑 Stop Chop</button>
+  </div>
+
+  <script>
+    let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    let source = null;
+    let buffer = null;
+    let chopInterval = null;
+    let convolver = null;
+    let reverbEnabled = false;
+    let beatChopIndex = 0;
+
+    document.getElementById('fileInput').addEventListener('change', function(event) {
+      const file = event.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          audioContext.decodeAudioData(e.target.result, function(decoded) {
+            buffer = decoded;
+          });
+        };
+        reader.readAsArrayBuffer(file);
+      }
+    });
+
+    document.getElementById('reverbToggle').addEventListener('change', async function(e) {
+      reverbEnabled = e.target.checked;
+      if (reverbEnabled && !convolver) {
+        convolver = audioContext.createConvolver();
+        const irResponse = await fetch('https://cdn.jsdelivr.net/gh/mdn/webaudio-examples/audio-basics/irHall.ogg');
+        const irArrayBuffer = await irResponse.arrayBuffer();
+        audioContext.decodeAudioData(irArrayBuffer, function(decodedIR) {
+          convolver.buffer = decodedIR;
+        });
+      }
+    });
+
+    function connectNodes(src) {
+      if (reverbEnabled && convolver && convolver.buffer) {
+        src.connect(convolver);
+        convolver.connect(audioContext.destination);
+      } else {
+        src.connect(audioContext.destination);
+      }
+    }
+
+    function playAudio() {
+      if (!buffer) return;
+      stopAudio();
+      source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.playbackRate.value = document.getElementById('speedSlider').value;
+      connectNodes(source);
+      source.start(0);
+    }
+
+    function stopAudio() {
+      if (source) {
+        source.stop();
+        source.disconnect();
+        source = null;
+      }
+    }
+
+    function startChop() {
+      if (!buffer) return;
+      stopChop();
+
+      const chopTime = parseFloat(document.getElementById('chopLengthInput').value);
+      const useBeatMode = document.getElementById('beatModeToggle').checked;
+      let intervalTime;
+
+      if (useBeatMode) {
+        const bpm = parseFloat(document.getElementById('bpmInput').value);
+        const beatDuration = 60 / bpm;
+        intervalTime = beatDuration / 2 * 1000; // double-time
+      } else {
+        intervalTime = parseInt(document.getElementById('chopIntervalInput').value);
+      }
+
+      beatChopIndex = 0;
+
+      chopInterval = setInterval(() => {
+        stopAudio();
+        source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.playbackRate.value = document.getElementById('speedSlider').value;
+        connectNodes(source);
+
+        let startTime;
+
+        if (useBeatMode) {
+          const bpm = parseFloat(document.getElementById('bpmInput').value);
+          const beatDuration = 60 / bpm;
+          startTime = beatChopIndex * (beatDuration / 2);
+          beatChopIndex++;
+          if (startTime + chopTime > buffer.duration) beatChopIndex = 0;
+        } else {
+          startTime = Math.random() * (buffer.duration - chopTime);
+        }
+
+        source.start(0, startTime, chopTime);
+      }, intervalTime);
+    }
+
+    function stopChop() {
+      if (chopInterval) {
+        clearInterval(chopInterval);
+        chopInterval = null;
+      }
+      stopAudio();
+    }
+  </script>
+</body>
+</html>
